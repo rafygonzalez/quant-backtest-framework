@@ -1,0 +1,56 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "btframework"
+version = "0.1.0"
+description = "A modular backtesting framework for quantitative trading strategies"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy",
+    "pandas",
+    "pydantic",
+    "pyyaml",
+    "yfinance",
+    "aiohttp",
+    "requests",
+    "pyarrow",
+    "plotly",
+    "dash",
+    "dash-bootstrap-components",
+    "scipy",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest",
+    "pytest-asyncio",
+    "mypy",
+    "ruff",
+]
+
+[project.scripts]
+# btframework = "btframework.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/btframework"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["src"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W", "UP"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
