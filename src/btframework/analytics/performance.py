@@ -77,6 +77,7 @@ from typing import Dict, List, Optional, Tuple
 class _Trade:
     pnl:        float
     is_win:     bool
+    exit_type:  str                 # "tp" | "sl" | "lifecycle_close" | "" (unknown)
     entry_dt:   Optional[datetime]
     exit_dt:    Optional[datetime]
     r_multiple: Optional[float]     # Realised R; None if not available
@@ -106,15 +107,19 @@ def _normalise(raw: List[dict]) -> List[_Trade]:
     out: List[_Trade] = []
     for t in raw:
         pnl     = float(t.get("pnl_money", t.get("pnl", 0.0)))
-        is_win  = (t.get("exit_type", "") == "tp"
-                   if "exit_type" in t
-                   else pnl > 0)
+        # Canonical win definition (see Quantira trade_metrics.is_win): a trade
+        # is a WIN iff it closed green. A trailed/BE winner exits via the moved
+        # SL (exit_type == "sl") despite pnl > 0 — classifying by exit_type
+        # counts it as a loss and corrupts WR, avg_loss, PF, expectancy, Kelly.
+        # exit_type is kept for the TP-vs-trail/BE visibility split only.
+        is_win  = pnl > 0
         audit   = t.get("audit", {})
         audit   = audit if isinstance(audit, dict) else {}
         r_raw   = t.get("rr_achieved")
         out.append(_Trade(
             pnl        = pnl,
             is_win     = is_win,
+            exit_type  = str(t.get("exit_type", "") or ""),
             entry_dt   = _parse_dt(t.get("entry_time",  t.get("opened_at"))),
             exit_dt    = _parse_dt(t.get("exit_time",   t.get("closed_at"))),
             r_multiple = float(r_raw) if r_raw is not None else None,
@@ -180,6 +185,10 @@ class PerformanceReport:
     breakeven_trades:       int
     win_rate_pct:           float           # 0–100
     loss_rate_pct:          float
+    # Exit-path split of winners: original TP hit vs closed green by the moved
+    # SL (trailing / break-even) or a lifecycle close. Same trades, two routes.
+    wins_via_tp:            int
+    wins_via_trail_be:      int
 
     # ── Risk-adjusted returns ─────────────────────────────────────────────────
     sharpe_ratio:           Optional[float]
@@ -292,9 +301,15 @@ def compute_performance(
         cagr_pct = ((final_equity / initial_capital) ** (365.25 / calendar_days) - 1) * 100
 
     # ── Trade classification ───────────────────────────────────────────────────
-    wins  = [t for t in ts if t.is_win]
-    losses = [t for t in ts if not t.is_win and t.pnl != 0.0]
-    beven  = [t for t in ts if not t.is_win and t.pnl == 0.0]
+    # win = closed green; loss = closed red; breakeven = flat. Trail/BE exits in
+    # green are wins (never losses); the exit path stays visible via the
+    # wins_via_tp / wins_via_trail_be split below.
+    wins   = [t for t in ts if t.is_win]
+    losses = [t for t in ts if t.pnl < 0.0]
+    beven  = [t for t in ts if t.pnl == 0.0]
+
+    wins_via_tp       = sum(1 for t in wins if t.exit_type == "tp")
+    wins_via_trail_be = len(wins) - wins_via_tp
 
     n  = len(ts)
     nw = len(wins)
@@ -459,6 +474,8 @@ def compute_performance(
         breakeven_trades            = nb,
         win_rate_pct                = win_rate_pct,
         loss_rate_pct               = loss_rate_pct,
+        wins_via_tp                 = wins_via_tp,
+        wins_via_trail_be           = wins_via_trail_be,
         sharpe_ratio                = sharpe_ratio,
         sortino_ratio               = sortino_ratio,
         calmar_ratio                = calmar_ratio,
@@ -730,6 +747,7 @@ def _empty_report(initial_capital: float) -> PerformanceReport:
         total_pnl=0.0, return_pct=0.0, cagr_pct=None,
         total_trades=0, winning_trades=0, losing_trades=0,
         breakeven_trades=0, win_rate_pct=0.0, loss_rate_pct=0.0,
+        wins_via_tp=0, wins_via_trail_be=0,
         sharpe_ratio=None, sortino_ratio=None, calmar_ratio=None,
         max_drawdown_abs=0.0, max_drawdown_pct=0.0,
         max_drawdown_duration_trades=0, max_underwater_trades=0,
@@ -780,6 +798,7 @@ def _print_report(r: PerformanceReport, title: str, width: int) -> None:
     print(sep2)
     row("Total",                 str(r.total_trades))
     row("Wins / Losses / BE",    f"{r.winning_trades} / {r.losing_trades} / {r.breakeven_trades}")
+    row("Wins via TP / trail-BE",f"{r.wins_via_tp} / {r.wins_via_trail_be}")
     row("Win rate",              f"{r.win_rate_pct:.1f}%")
     row("Avg win",               f"${r.avg_win:>+.2f}")
     row("Avg loss",              f"${r.avg_loss:>+.2f}")
@@ -891,12 +910,14 @@ def _to_dict(r: PerformanceReport) -> dict:
             "cagr_pct":   r.cagr_pct,
         },
         "trades": {
-            "total":         r.total_trades,
-            "wins":          r.winning_trades,
-            "losses":        r.losing_trades,
-            "breakeven":     r.breakeven_trades,
-            "win_rate_pct":  r.win_rate_pct,
-            "loss_rate_pct": r.loss_rate_pct,
+            "total":             r.total_trades,
+            "wins":              r.winning_trades,
+            "losses":            r.losing_trades,
+            "breakeven":         r.breakeven_trades,
+            "wins_via_tp":       r.wins_via_tp,
+            "wins_via_trail_be": r.wins_via_trail_be,
+            "win_rate_pct":      r.win_rate_pct,
+            "loss_rate_pct":     r.loss_rate_pct,
         },
         "distribution": {
             "avg_win":        r.avg_win,
