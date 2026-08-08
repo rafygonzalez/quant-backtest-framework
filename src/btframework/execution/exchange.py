@@ -86,22 +86,21 @@ class SimulatedExchange:
         # metadata key are mutually exclusive. When one fills, others in
         # the group are cancelled.
         #
-        # Priority within a bar uses direction heuristic:
-        #   Bullish bar (C > O) → STOP orders first (low comes first)
-        #   Bearish bar (C < O) → LIMIT orders first (high comes first)
-        # This determines which bracket fills when both trigger on same bar.
+        # Priority within a bar uses direction heuristic on the TRIGGER LEVEL:
+        #   Bullish bar (C > O) → assume path O→L→H → below-market levels first
+        #   Bearish bar (C < O) → assume path O→H→L → above-market levels first
+        # A trigger is below-market for STOP SELL (long SL) and LIMIT BUY
+        # (short TP); above-market for STOP BUY (short SL) and LIMIT SELL
+        # (long TP). Type-only priority inverted the path for shorts.
         filled_oco: set[str] = set()
 
         is_bullish = bar.close > bar.open
         def _oco_priority(o: Order) -> int:
             if not o.metadata.get("_oco_group"):
                 return 0  # non-OCO orders keep original order
-            if is_bullish:
-                # Low first → STOP fills first (SL for LONG, TP for SHORT)
-                return 0 if o.order_type == OrderType.STOP else 1
-            else:
-                # High first → LIMIT fills first (TP for LONG, SL for SHORT)
-                return 0 if o.order_type == OrderType.LIMIT else 1
+            below = (o.side == Side.SELL) if o.order_type in (
+                OrderType.STOP, OrderType.STOP_LIMIT) else (o.side == Side.BUY)
+            return 0 if below == is_bullish else 1
 
         active_orders.sort(key=_oco_priority)
 
