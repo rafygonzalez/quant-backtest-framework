@@ -92,10 +92,10 @@ class SimulatedExchange:
         the stop exits at the following open instead of at the stop. What the bar does
         after the fill is the order of events, not look-ahead.
 
-        The residual is the intra-bar path, which OHLC never reveals: for a fill at the
-        bar's open the whole range lies ahead, for a mid-bar fill part of it may not.
-        That is the same unknown the OCO direction heuristic already arbitrates, applied
-        to the same bar rather than deferred out of it.
+        Only the part of the bar that FOLLOWS the parent's fill may be read, and for a
+        mid-bar fill that is one side of the bar, not both — see _follows_parent_fill.
+        An order held back here is not lost: it rests and is matched normally from the
+        next bar, exactly as before.
 
         Does not advance the bar index: these orders belong to the bar being processed.
         """
@@ -103,12 +103,48 @@ class SimulatedExchange:
         remaining: list[Order] = []
         for order in self._pending_orders:
             if (order.symbol == symbol and order.is_active
-                    and order.metadata.get("_submitted_bar") == self._bar_index):
+                    and order.metadata.get("_submitted_bar") == self._bar_index
+                    and self._follows_parent_fill(order, bar)):
                 active_orders.append(order)
             else:
                 remaining.append(order)
 
         return self._match(bar, active_orders, remaining)
+
+    def _follows_parent_fill(self, order: Order, bar: Bar) -> bool:
+        """Is this order's trigger in the part of the bar that comes AFTER its parent?
+
+        OHLC gives no path, but the parent's own fill price says which leg it sat on:
+
+          filled at the open      the whole range is still ahead — both sides readable.
+                                  The submitter says so with _parent_at_open, because
+                                  the fill price alone cannot: cost is applied to fills
+                                  by middleware AFTER the exchange prices them, so a
+                                  market entry arrives here displaced from bar.open and
+                                  would be mistaken for a mid-bar fill.
+          filled BELOW the open   price came down to it, so the LOW is at or after the
+                                  fill; the HIGH may already have happened
+          filled ABOVE the open   price rose to it, so the HIGH is after and the LOW is
+                                  the doubtful one
+
+        So a trigger on the far side of the parent's fill is readable and one on the near
+        side is not. Without this, a limit entry filling on a dip could collect a target
+        set at a high the bar had already printed before the position existed — measured
+        on AUD/USD as 7 trades and +$379 of pure hindsight.
+        """
+        if order.metadata.get("_parent_at_open"):
+            return True
+        parent = order.metadata.get("_parent_fill")
+        if parent is None:
+            return True
+        if parent == bar.open:
+            return True
+        trigger = (order.stop_price
+                   if order.order_type in (OrderType.STOP, OrderType.STOP_LIMIT)
+                   else order.price)
+        if trigger is None:
+            return True
+        return trigger <= parent if parent < bar.open else trigger >= parent
 
     def _match(
         self,
