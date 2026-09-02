@@ -323,18 +323,15 @@ class BacktestEngine:
 
                 # Process pending orders from previous bars (no look-ahead)
                 fills = self._execution_engine.process_bar(symbol, bar, ctx)
-                for fill in fills:
-                    self._hooks.emit("after_fill", fill=fill, ctx=ctx)
-                    try:
-                        self._account.process_fill(fill, bar.timestamp)
-                    except Exception as e:
-                        if fail_fast:
-                            raise
-                        logger.error(f"Fill processing error: {e}", exc_info=True)
-                        self._hooks.emit("on_fill_error", error=e, fill=fill)
-                        continue
-                    if hasattr(self._strategy, 'on_fill'):
-                        self._strategy.on_fill(fill)
+                self._dispatch_fills(fills, bar, ctx, fail_fast)
+
+                # A bracket is submitted from on_fill — at the fill instant, not at this
+                # bar's close — so it protects the position for the rest of this bar.
+                # Deferring it would leave an entry without a stop for its whole fill bar.
+                if fills:
+                    self._dispatch_fills(
+                        self._execution_engine.process_bar_late(symbol, bar, ctx),
+                        bar, ctx, fail_fast)
 
                 # Update account prices and check margin
                 prices = {symbol: bar.close}
@@ -383,6 +380,21 @@ class BacktestEngine:
             ohlcv_data=self._ohlcv_data,
             indicators=self._indicators,
         )
+
+    def _dispatch_fills(self, fills, bar: Bar, ctx: ExecutionContext, fail_fast: bool) -> None:
+        """Book each fill on the account and hand it to the strategy."""
+        for fill in fills:
+            self._hooks.emit("after_fill", fill=fill, ctx=ctx)
+            try:
+                self._account.process_fill(fill, bar.timestamp)
+            except Exception as e:
+                if fail_fast:
+                    raise
+                logger.error(f"Fill processing error: {e}", exc_info=True)
+                self._hooks.emit("on_fill_error", error=e, fill=fill)
+                continue
+            if hasattr(self._strategy, 'on_fill'):
+                self._strategy.on_fill(fill)
 
     def _liquidate_all(self, bar: Bar, ctx: ExecutionContext) -> None:
         """Cancel all pending orders and close all positions via MARKET orders."""

@@ -14,7 +14,9 @@ logger = logging.getLogger(__name__)
 class SimulatedExchange:
     """Simulates order matching and execution.
 
-    Orders submitted on bar N are executed on bar N+1 (no look-ahead bias).
+    Orders submitted from a bar's close are executed on bar N+1 (no look-ahead
+    bias). Orders submitted from a fill callback are live for the rest of the bar
+    that produced the fill — see process_bar_late.
     Uses a two-phase fill protocol: _try_fill returns a candidate Fill,
     confirm_fill commits it to the order.
 
@@ -57,7 +59,6 @@ class SimulatedExchange:
         committed to orders — call confirm_fill() to finalize.
         """
         self._bar_index += 1
-        candidates: list[tuple[Order, Fill]] = []
         remaining: list[Order] = []
 
         # Phase 0: Expire orders based on TimeInForce before attempting fills
@@ -79,6 +80,44 @@ class SimulatedExchange:
                     continue
 
             active_orders.append(order)
+
+        return self._match(bar, active_orders, remaining)
+
+    def process_bar_late(self, symbol: str, bar: Bar) -> list[tuple[Order, Fill]]:
+        """Match orders submitted DURING this bar against the rest of it.
+
+        A bracket is submitted from the strategy's fill callback — at the instant the
+        parent order filled, not at the bar's close. Holding it back to the next bar
+        leaves the position without a stop for the whole fill bar, so a bar that crosses
+        the stop exits at the following open instead of at the stop. What the bar does
+        after the fill is the order of events, not look-ahead.
+
+        The residual is the intra-bar path, which OHLC never reveals: for a fill at the
+        bar's open the whole range lies ahead, for a mid-bar fill part of it may not.
+        That is the same unknown the OCO direction heuristic already arbitrates, applied
+        to the same bar rather than deferred out of it.
+
+        Does not advance the bar index: these orders belong to the bar being processed.
+        """
+        active_orders: list[Order] = []
+        remaining: list[Order] = []
+        for order in self._pending_orders:
+            if (order.symbol == symbol and order.is_active
+                    and order.metadata.get("_submitted_bar") == self._bar_index):
+                active_orders.append(order)
+            else:
+                remaining.append(order)
+
+        return self._match(bar, active_orders, remaining)
+
+    def _match(
+        self,
+        bar: Bar,
+        active_orders: list[Order],
+        remaining: list[Order],
+    ) -> list[tuple[Order, Fill]]:
+        """Try fills for active_orders against bar; park the rest in remaining."""
+        candidates: list[tuple[Order, Fill]] = []
 
         # Phase 1: Try fills (with OCO group support)
         #
@@ -105,8 +144,6 @@ class SimulatedExchange:
         active_orders.sort(key=_oco_priority)
 
         for order in active_orders:
-            submitted_bar = order.metadata.get("_submitted_bar", 0)
-
             # OCO: skip if another order in same group already filled
             oco_group = order.metadata.get("_oco_group")
             if oco_group and oco_group in filled_oco:

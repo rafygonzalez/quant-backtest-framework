@@ -88,7 +88,13 @@ class ExecutionEngine:
 
     def process_bar(self, symbol: str, bar: Bar, ctx: ExecutionContext) -> list[Fill]:
         """Process pending orders against new bar data using two-phase protocol."""
-        candidates = self._exchange.process_bar(symbol, bar)
+        return self._commit(self._exchange.process_bar(symbol, bar), ctx)
+
+    def process_bar_late(self, symbol: str, bar: Bar, ctx: ExecutionContext) -> list[Fill]:
+        """Process orders submitted during this bar against the rest of it."""
+        return self._commit(self._exchange.process_bar_late(symbol, bar), ctx)
+
+    def _commit(self, candidates, ctx: ExecutionContext) -> list[Fill]:
         processed_fills: list[Fill] = []
 
         for order, candidate_fill in candidates:
