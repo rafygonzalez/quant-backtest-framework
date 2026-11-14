@@ -1,0 +1,313 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="replay-token" content="__TOKEN__" />
+    <title>Replay Studio</title>
+    <link rel="stylesheet" href="/style.css" />
+    <script src="/plotly.js" defer></script>
+    <script src="/i18n.js" defer></script>
+    <script src="/tools.js" defer></script>
+    <script src="/ticket.js" defer></script>
+    <script src="/journal.js" defer></script>
+    <script src="/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <div class="brand"><b>◈</b> REPLAY<span>STUDIO</span></div>
+      <div id="clock"></div>
+      <select id="language" aria-label="Language">
+        <option value="es">ES</option>
+        <option value="en">EN</option></select
+      ><button id="setupToggle" data-t="setup"></button
+      ><button id="save" data-t="save"></button
+      ><label class="button"
+        ><span data-t="restore"></span
+        ><input id="restore" type="file" accept=".json" hidden /></label
+      ><button id="report" data-t="report"></button
+      ><button id="htmlReport" data-t="htmlReport"></button>
+    </header>
+    <main>
+      <section id="setup" class="card">
+        <h2 data-t="session"></h2>
+        <div class="formgrid">
+          <label
+            ><span data-t="symbol"></span
+            ><input id="symbol" value="MNQ" /></label
+          ><label
+            ><span data-t="instrument"></span
+            ><select id="kind">
+              <option value="futures" data-t="futures"></option>
+              <option value="forex">Forex</option>
+              <option value="cfd">CFD</option>
+            </select></label
+          ><label
+            ><span data-t="strategy"></span
+            ><select id="strategy">
+              <option value="manual" data-t="manual"></option></select></label
+          ><label
+            ><span data-t="capital"></span
+            ><input id="capital" type="number" min="10" value="10000"
+          /></label>
+          <label
+            ><span data-t="tick"></span
+            ><input
+              id="tick_size"
+              value="0.25"
+              type="number"
+              step="any" /></label
+          ><label
+            ><span data-t="contract"></span
+            ><input
+              id="contract_size"
+              value="2"
+              type="number"
+              step="any" /></label
+          ><label
+            ><span data-t="minimum"></span
+            ><input id="minimum" value="1" type="number" step="any" /></label
+          ><label
+            ><span data-t="step"></span
+            ><input id="step" value="1" type="number" step="any" /></label
+          ><label
+            ><span data-t="margin"></span
+            ><input
+              id="margin_per_contract"
+              value="1000"
+              type="number"
+              step="any" /></label
+          ><label
+            ><span data-t="leverage"></span
+            ><input id="leverage" value="1" type="number" step="any" /></label
+          ><label
+            ><span data-t="commission"></span
+            ><input id="commission" value="0" type="number" step="any" /></label
+          ><label
+            ><span data-t="spread"></span
+            ><input id="spread" value="0" type="number" step="any"
+          /></label>
+          <label
+            ><span data-t="currency"></span
+            ><input id="currency" value="USD" maxlength="3" /></label
+          ><label
+            ><span data-t="data"></span
+            ><input id="csv" type="file" accept=".csv" /></label
+          ><label
+            ><span data-t="base"></span
+            ><select id="base_minutes">
+              <option>1</option>
+              <option>5</option>
+            </select></label
+          ><label
+            ><span data-t="from"></span
+            ><input id="start" type="datetime-local" /></label
+          ><label
+            ><span data-t="to"></span><input id="end" type="datetime-local"
+          /></label>
+        </div>
+        <p class="muted" data-t="profileNote"></p>
+        <button class="primary" id="create" data-t="begin"></button>
+      </section>
+      <div id="workspace" hidden>
+        <section class="toolbar">
+          <div class="controls">
+            <button id="play" class="primary" data-t="play"></button
+            ><button id="pause" data-t="pause"></button
+            ><button id="stepButton" data-t="nextBar"></button
+            ><button id="next" data-t="nextEvent"></button
+            ><label
+              ><span data-t="speed"></span
+              ><select id="speed">
+                <option value="1000">1×</option>
+                <option value="250">4×</option>
+                <option value="50">20×</option>
+              </select></label
+            >
+          </div>
+          <label
+            ><span data-t="visibleBars"></span
+            ><select id="visibleBars">
+              <option>40</option>
+              <option>80</option>
+              <option selected>150</option>
+              <option>300</option>
+              <option>600</option>
+              <option>1200</option>
+            </select></label
+          ><button id="followLatest" data-t="followLatest"></button
+          ><button id="focusCharts" data-t="focusCharts"></button>
+          <div id="status" role="status"></div>
+          <progress id="progress" max="100" value="0"></progress>
+        </section>
+        <section class="study-controls card">
+<details id="studySettings"><summary data-t="studySettings"></summary>
+          <div class="indicator-toggles">
+            <label
+              ><input type="checkbox" id="showPine" checked /><span
+                data-t="frameworkM5"
+              ></span></label
+            ><label
+              ><input type="checkbox" id="showMA" checked />MA9 / MA20</label
+            ><label
+              ><input type="checkbox" id="showRanges" checked /><span
+                data-t="ranges"
+              ></span></label
+            ><label
+              ><input type="checkbox" id="showPastRanges" checked /><span
+                data-t="pastRanges"
+              ></span></label
+            ><label><input type="checkbox" id="showDivergences" checked /><span data-t="divergences"></span></label><label><input type="checkbox" id="showFormingDivergences" checked /><span data-t="formingDivergences"></span></label><label><input type="checkbox" id="showDivergenceLines" checked /><span data-t="divergenceLines"></span></label><label><input type="checkbox" id="showROC" checked />ROC</label
+            ><label><input type="checkbox" id="showOBV" checked />OBV</label
+            ><select id="obvMode">
+              <option value="obv" data-t="cumulativeOBV"></option>
+              <option value="flow" data-t="flowOBV"></option></select
+            ><button id="moreHistory" data-t="moreHistory"></button>
+          </div>
+          </details><button id="openTicket" class="primary" data-t="newTrade"></button>
+          <span class="ticket-shortcut" data-t="ticketShortcut"></span>
+        </section>
+        <div class="date-toolbar"><label><span data-t="dateUTC"></span><input id="navigateDate" type="datetime-local" /></label><button id="navigateView" data-t="viewDate"></button><button id="navigateReplay" data-t="replayDate"></button><select id="checkpoints" data-aria="savedSessions"></select><button id="resumeCheckpoint" data-t="resumeCheckpoint"></button><span id="persistenceStatus" role="status"></span><span id="coverage"></span></div>
+        <div class="layout">
+          <div class="analysis">
+            <div class="chartgrid">
+              <section class="chartpanel">
+                <div class="charthead">
+                  <b class="symbolLabel"></b
+                  ><select id="left" data-aria="leftTimeframe">
+                    <option value="1">1m</option>
+                    <option value="5" selected>5m</option>
+                    <option value="15">15m</option>
+                    <option value="60">1h</option>
+                    <option value="240">4h</option>
+                  </select>
+                  <span id="divergence0" class="divergence-count"></span><span id="quote0" class="chart-quote"></span><button type="button" class="chart-fullscreen-button" data-chart-fullscreen="0" data-aria="fullscreenChart" title="" aria-expanded="false">⛶</button>
+                </div>
+                <div id="chart0" class="chart"></div>
+                <div id="framework0" class="framework-context"></div>
+                <div id="history0" class="chart-context"></div>
+              </section>
+              <section class="chartpanel">
+                <div class="charthead">
+                  <b class="symbolLabel"></b
+                  ><select id="right" data-aria="rightTimeframe">
+                    <option value="1">1m</option>
+                    <option value="5">5m</option>
+                    <option value="15">15m</option>
+                    <option value="60">1h</option>
+                    <option value="240">4h</option>
+                  </select>
+                  <span id="divergence1" class="divergence-count"></span><span id="quote1" class="chart-quote"></span><button type="button" class="chart-fullscreen-button" data-chart-fullscreen="1" data-aria="fullscreenChart" title="" aria-expanded="false">⛶</button>
+                </div>
+                <div id="chart1" class="chart"></div>
+                <div id="framework1" class="framework-context"></div>
+                <div id="history1" class="chart-context"></div>
+              </section>
+            </div>
+            <details id="journalDetails" class="card journal-report"><summary><span data-t="journalTitle"></span> · <span id="journalCount">0</span></summary>
+              <div class="jr-workspace"><div class="jr-topbar"><div class="jr-head"><div><h2 id="jrWorkspaceTitle" data-t="jrWorkspace"></h2><p data-t="jrIntro"></p></div><div class="jr-actions"><button id="jrExpand" type="button" data-t="jrExpand"></button><button id="journalRefresh" type="button" data-t="journalRefresh"></button><button id="journalExport" type="button" data-t="journalExport"></button></div></div>
+              <div id="journalStorageWarning" class="negative" hidden data-t="journalStorageError"></div>
+              <div class="jr-tabs" role="tablist" data-aria="jrViews"><button id="jrTradesTab" type="button" role="tab" aria-selected="true" aria-controls="jrTradesPanel" data-t="jrTrades"></button><button id="jrPatternsTab" type="button" role="tab" aria-selected="false" aria-controls="jrPatternsPanel" data-t="jrPatterns"></button></div>
+              </div>
+              <section id="jrTradesPanel" role="tabpanel" aria-labelledby="jrTradesTab">
+                <div class="jr-toolbar"><label><span data-t="jrDirection"></span><select id="journalSide"><option value="all" data-t="jrBoth"></option><option value="BUY" data-t="jrLong"></option><option value="SELL" data-t="jrShort"></option></select></label><label><span data-t="journalFilter"></span><select id="journalFilter"><option value="all" data-t="journalAll"></option><option value="wins" data-t="journalWins"></option><option value="losses" data-t="journalLosses"></option><option value="open" data-t="jrOpenOrders"></option><option value="unfilled" data-t="journalStatus_unfilled"></option><option value="not_proposed" data-t="journalNotProposed"></option><option value="proposed" data-t="journalProposed"></option></select></label><label class="jr-search"><span data-t="jrSearch"></span><input id="journalSearch" type="search" data-placeholder="jrSearchHint"/></label></div>
+                <div id="journalSummary" class="jr-summary"></div><div id="jrCohortBanner" class="jr-cohort-banner" hidden></div>
+                <div class="jr-row-head"><span data-t="jrDate"></span><span data-t="jrDirection"></span><span data-t="journal_setup"></span><span data-t="jrEngine"></span><span data-t="jrResult"></span><span data-t="jrNotes"></span><span></span></div>
+                <div id="journalEntries"></div><div class="jr-pagination"><span id="jrPageLabel"></span><div><button id="jrPrev" type="button" data-t="jrPrevious"></button><button id="jrNext" type="button" data-t="jrNext"></button></div></div>
+              </section>
+              <section id="jrPatternsPanel" role="tabpanel" aria-labelledby="jrPatternsTab" hidden>
+                <div class="jr-toolbar"><label><span data-t="jrCriterion"></span><select id="jrDimension"></select></label><label><span data-t="jrDirection"></span><select id="jrPatternSide"><option value="all" data-t="jrBoth"></option><option value="BUY" data-t="jrLong"></option><option value="SELL" data-t="jrShort"></option></select></label><label><span data-t="jrReadingTime"></span><select id="jrBasis"><option value="latest" data-t="jrLatest"></option><option value="entry" data-t="jrAtEntry"></option></select></label></div>
+                <details class="jr-context"><summary data-t="jrRefine"></summary><div class="jr-toolbar"><label><span data-t="jrExtraCriterion"></span><select id="jrContextDimension"></select></label><label><span data-t="jrExtraValue"></span><select id="jrContextValue"></select></label><button id="jrContextClear" type="button" data-t="jrContextClear"></button></div></details>
+                <div id="jrPatternSummary" class="jr-metrics"></div><p class="jr-method" data-t="jrPatternMethod"></p>
+                <div id="journalPatterns" class="jr-pattern-table"></div>
+              </section>
+              </div>
+            </details>
+            <details id="scoreDetails" class="card"><summary data-t="scoreboard"></summary>
+              <div id="metrics" class="metrics"></div>
+              <div id="equity" style="height: 180px"></div>
+              <h3 data-t="byEvent"></h3>
+              <div id="breakdown"></div>
+              <h3 data-t="history"></h3>
+              <div id="trades" class="scroll"></div>
+            </details>
+          </div>
+          <aside>
+            <section class="card">
+              <h2 data-t="account"></h2>
+              <div id="liveScore" class="live-score"></div><div id="account"></div><button id="accountDetails" type="button" class="account-details" data-t="accountDetails"></button>
+            </section>
+
+            <section id="entryAssessment" class="card entry-assessment" hidden aria-labelledby="entryAssessmentTitle">
+              <div class="assessment-heading"><strong id="entryAssessmentTitle" data-t="entryMotor"></strong><span id="entryDecision" role="status"></span></div>
+              <div id="entryStages" class="entry-stages"></div>
+              <p id="entryReason"></p>
+              <div id="entryProposal" class="entry-proposal" hidden></div>
+              <button id="loadEngineLimit" type="button" class="full" hidden data-t="loadEngineLimit"></button>
+              <details><summary data-t="entryEvidence"></summary><div id="entryEvidence"></div></details>
+            </section>
+            <section id="brokerTicket" class="card broker-ticket" aria-labelledby="ticketTitle">
+              <div class="ticket-heading"><span class="instrument-badge">◈</span><strong id="ticketTitle" class="symbolLabel"></strong><button id="hideTicket" type="button" data-aria="hideTicket">×</button></div>
+              <form id="ticket">
+                <select id="side" hidden><option value="BUY">BUY</option><option value="SELL">SELL</option></select>
+                <select id="order_type" hidden><option value="MARKET">MARKET</option><option value="LIMIT">LIMIT</option><option value="STOP">STOP</option></select>
+                <div class="quote-switch" role="group" data-aria="side">
+                  <button type="button" data-side="SELL" class="quote-side sell"><span data-t="sell"></span><strong id="sellQuote">—</strong></button>
+                  <button type="button" data-side="BUY" class="quote-side buy"><span data-t="buy"></span><strong id="buyQuote">—</strong></button>
+                </div>
+                <div id="spreadQuote" class="quote-caption"></div>
+                <div class="order-tabs" role="group" data-aria="orderType"><button type="button" data-order-mode="market" data-t="market"></button><button type="button" data-order-mode="pending" data-t="pendingTab"></button></div>
+                <div id="pendingTypeRow" class="pending-type"><label><span data-t="pendingType"></span><select id="pendingType"><option value="LIMIT" data-t="limit"></option><option value="STOP" data-t="stop"></option></select></label></div>
+                <div id="entryPriceRow" class="ticket-field"><label for="price" data-t="entryPrice"></label><div class="price-stepper"><input id="price" type="number" step="any" data-aria="entryPrice"/><button type="button" data-plan="entry" data-aria="pickEntry">⌖</button><button type="button" data-step-field="price" data-step-direction="-1" data-aria="decrease">−</button><button type="button" data-step-field="price" data-step-direction="1" data-aria="increase">+</button></div></div>
+                <div class="ticket-field"><label for="quantity" data-t="volume"></label><div class="price-stepper volume-stepper"><input id="quantity" type="number" value="1" step="1" min="1" required/><span id="volumeUnit"></span><button type="button" data-step-field="quantity" data-step-direction="-1" data-aria="decrease">−</button><button type="button" data-step-field="quantity" data-step-direction="1" data-aria="increase">+</button></div></div>
+                <div class="ticket-field"><div class="ticket-field-label"><label for="tp" data-t="takeProfit"></label><output id="tpAmount" for="tp price quantity side" class="bracket-amount" aria-live="polite"></output></div><div class="price-stepper"><input id="tp" aria-describedby="tpAmount" type="number" step="any" data-placeholder="notSet"/><button type="button" data-plan="tp" data-aria="pickTP">⌖</button><button type="button" data-step-field="tp" data-step-direction="-1" data-aria="decrease">−</button><button type="button" data-step-field="tp" data-step-direction="1" data-aria="increase">+</button></div></div>
+                <div class="ticket-field"><div class="ticket-field-label"><label for="sl" data-t="stopLoss"></label><output id="slAmount" for="sl price quantity side" class="bracket-amount" aria-live="polite"></output></div><div class="price-stepper"><input id="sl" aria-describedby="slAmount" type="number" step="any" data-placeholder="notSet"/><button type="button" data-plan="sl" data-aria="pickSL">⌖</button><button type="button" data-step-field="sl" data-step-direction="-1" data-aria="decrease">−</button><button type="button" data-step-field="sl" data-step-direction="1" data-aria="increase">+</button></div></div>
+                <div id="ticketEstimate" class="ticket-estimate" aria-live="polite"></div>
+                <div id="planStatus" role="status" class="plan-status"></div>
+                <details id="journalForm" class="journal-form"><summary data-t="journalOptional"></summary>
+                  <p data-t="journalManualReading" class="ticket-note"></p>
+                  <button id="journalAutofill" type="button" data-t="journalAutofill"></button><p id="journalAutoStatus" class="ticket-note" role="status"></p>
+                  <div id="journalFields" class="journal-fields"></div>
+                  <label for="journalNote" data-t="journalNote"></label><textarea id="journalNote" maxlength="2000" rows="2" data-placeholder="journalNotePlaceholder"></textarea>
+                </details>
+                <button id="submitOrder" class="order-confirm full" type="submit"></button>
+                <details class="ticket-context"><summary data-t="orderContext"></summary><label><span data-t="eventContext"></span><select id="event_id"></select></label><button id="clearPlan" type="button" data-t="clearPlan"></button><p class="ticket-note" data-t="ticketExecution"></p></details>
+              </form>
+            </section>
+            <section class="card" id="positionCard">
+              <h2 data-t="position"></h2><div id="orderState" role="status"></div><button id="activatePending" class="primary full" data-t="activatePending"></button><button id="close" class="danger full" data-t="close"></button><label><span data-t="entry"></span><input id="manageEntry" type="number" step="any" /></label>
+              <div id="position"></div>
+              <div class="formgrid two">
+                <label
+                  >SL<input id="positionSL" type="number" step="any" /></label
+                ><label
+                  >TP<input id="positionTP" type="number" step="any"
+                /></label>
+              </div>
+              <button id="modify" class="full" data-t="modify"></button
+              ><button id="be" class="full" data-t="be"></button
+              ><details class="trailing-settings"><summary data-t="trailingOptions"></summary><label
+                ><span data-t="trailing"></span
+                ><input
+                  id="trailing"
+                  type="number"
+                  min="0"
+                  step="any"
+                  value="0" /></label
+              ><button id="trail" class="full" data-t="applyTrail"></button
+              >
+              </details><button id="cancelVisible" class="full" data-t="cancel"></button><p class="muted" data-t="executionNote"></p>
+            </section>
+            <details class="card pause-settings"><summary data-t="pauses"></summary>
+              <div id="events"></div>
+              <div id="eventNow" class="event"></div>
+            </details>
+
+
+          </aside>
+        </div>
+      </div>
+      <div id="error" role="alert" hidden></div>
+    </main>
+  </body>
+</html>

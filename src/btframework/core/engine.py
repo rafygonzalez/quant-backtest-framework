@@ -26,6 +26,8 @@ from btframework.account.account import Account
 from btframework.strategy.indicators.base import IndicatorPipeline, Indicator
 from btframework.types import Side, OrderType
 from btframework.exceptions import ConfigError
+from btframework.charts.engine import ChartEngine
+from btframework.analytics.tearsheet import generate_tearsheet
 
 logger = logging.getLogger(__name__)
 
@@ -84,14 +86,12 @@ class BacktestResult:
 
     def show_chart(self, **kwargs) -> None:
         """Open interactive chart in browser."""
-        from btframework.charts.engine import ChartEngine
         if self._chart_engine is None:
             self._chart_engine = ChartEngine(self)
         self._chart_engine.show(**kwargs)
 
     def save_report(self, path: str | Path) -> None:
         """Save HTML tearsheet report."""
-        from btframework.analytics.tearsheet import generate_tearsheet
         generate_tearsheet(self, path)
 
 
@@ -119,6 +119,7 @@ class BacktestEngine:
         self._calendar: TradingCalendar | None = None
         self._sizer: PositionSizer | None = None
         self._spread_profile: SpreadProfile | None = None
+        self._fixed_half_spread: Decimal | None = None
 
     @classmethod
     def from_yaml(cls, path: str | Path) -> "BacktestEngine":
@@ -231,148 +232,219 @@ class BacktestEngine:
         self._spread_profile = profile or SpreadProfile.default_forex()
         return self
 
+    def with_fixed_spread(self, spread: Decimal) -> "BacktestEngine":
+        spread = Decimal(str(spread))
+        if not spread.is_finite() or spread < 0:
+            raise ConfigError("Invalid spread")
+        self._fixed_half_spread = spread / 2
+        return self
+
     def stop(self) -> None:
         """Stop the backtest (can be called from hooks)."""
         self._stopped = True
 
     # --- Run ---
 
-    def run(self) -> BacktestResult:
-        """Execute the backtest."""
+    def start(self) -> "BacktestEngine":
+        """Initialize a fresh session without consuming its feed."""
         self._validate()
         self._reset()
         self._setup()
-
-        logger.info(f"Starting backtest: {self._config.name}")
+        self._feed_iterator = iter(self._feed)
+        self._bar_count = 0
+        self._warmup = self._strategy.warmup_period() if hasattr(self._strategy, "warmup_period") else 0
+        self._finished = False
+        self._started = True
+        logger.info("Starting backtest: %s", self._config.name)
         self._hooks.emit("on_backtest_start", engine=self)
+        return self
 
-        bar_count = 0
-        warmup = self._strategy.warmup_period() if hasattr(self._strategy, 'warmup_period') else 0
-        fail_fast = self._config.fail_fast
+    @property
+    def finished(self) -> bool:
+        return getattr(self, "_finished", False)
 
-        for bar_events in self._feed:
-            if self._stopped:
-                break
+    @property
+    def account(self) -> Account:
+        return self._account
 
-            bar_count += 1
+    @property
+    def pending_orders(self) -> list[Order]:
+        return self._exchange.pending_orders
 
-            for symbol, event in bar_events.items():
-                # Create Bar from event
-                bar = Bar(
-                    timestamp=event.bar_timestamp or event.timestamp,
-                    open=event.open,
-                    high=event.high,
-                    low=event.low,
-                    close=event.close,
-                    volume=event.volume,
-                    symbol=symbol,
-                )
+    def submit_order(self, order: Order, *, reducing: bool = False) -> None:
+        """Submit at the replay cursor, eligible from the next bar."""
+        if not getattr(self, "_started", False) or self.finished:
+            raise ConfigError("Session is not active")
+        if not order.quantity.is_finite() or order.quantity <= 0:
+            raise ConfigError("Invalid quantity")
+        valid, reason = self._account.broker.validate_order(order)
+        if not valid:
+            raise ConfigError(reason)
+        if reducing:
+            pos = self._account.get_position(order.symbol, order.strategy_id)
+            expected = Side.SELL if pos and pos.side.name == "LONG" else Side.BUY
+            if pos is None or order.side != expected or order.quantity > pos.quantity:
+                raise ConfigError("Invalid reducing order")
+        else:
+            instrument = next((i for i in self._instruments if i.symbol == order.symbol), None)
+            if instrument is None:
+                raise ConfigError("Unknown instrument")
+            valid, reason = self._account.broker.lot_spec(instrument).validate_quantity(order.quantity)
+            if not valid:
+                raise ConfigError(reason)
+            price = order.price or order.stop_price
+            if price is None and self._ohlcv_data.get(order.symbol):
+                price = Decimal(str(self._ohlcv_data[order.symbol][-1]["close"]))
+            if price is None or not self._account.check_margin(order.symbol, order.quantity, price):
+                raise ConfigError("Insufficient margin")
+        self._exchange.submit_order(order)
 
-                # Collect OHLCV for charts
-                if symbol not in self._ohlcv_data:
-                    self._ohlcv_data[symbol] = []
-                self._ohlcv_data[symbol].append({
-                    "timestamp": bar.timestamp,
-                    "open": float(bar.open),
-                    "high": float(bar.high),
-                    "low": float(bar.low),
-                    "close": float(bar.close),
-                    "volume": bar.volume,
-                })
+    def cancel_orders(self, symbol: str | None = None) -> int:
+        return self._exchange.cancel_all(symbol)
 
-                # Advance clock
-                self._clock.advance(bar.timestamp)
+    def step(self) -> bool:
+        """Consume one feed step; return False when exhausted or stopped."""
+        if not getattr(self, "_started", False):
+            self.start()
+        if self.finished:
+            return False
+        if self._stopped:
+            self._finish()
+            return False
+        try:
+            bar_events = next(self._feed_iterator)
+        except StopIteration:
+            self._finish()
+            return False
+        self._bar_count += 1
 
-                # Update indicators
-                self._indicators.update(bar)
+        for symbol, event in bar_events.items():
+            # Create Bar from event
+            bar = Bar(
+                timestamp=event.bar_timestamp or event.timestamp,
+                open=event.open,
+                high=event.high,
+                low=event.low,
+                close=event.close,
+                volume=event.volume,
+                symbol=symbol,
+            )
 
-                # Publish market data event
-                self._event_bus.publish(event)
-                self._hooks.emit("before_bar", event=event, bar=bar)
+            # Collect OHLCV for charts
+            if symbol not in self._ohlcv_data:
+                self._ohlcv_data[symbol] = []
+            self._ohlcv_data[symbol].append({
+                "timestamp": bar.timestamp,
+                "open": float(bar.open),
+                "high": float(bar.high),
+                "low": float(bar.low),
+                "close": float(bar.close),
+                "volume": bar.volume,
+            })
 
-                # Check calendar for market hours
-                market_open = True
-                active_sessions = []
-                if self._calendar is not None:
-                    market_open = self._calendar.is_market_open(bar.timestamp)
-                    if market_open:
-                        active_sessions = self._calendar.active_sessions(bar.timestamp)
+            # Advance clock
+            self._clock.advance(bar.timestamp)
 
-                # Compute bid/ask spread for this bar
-                half_spread = Decimal("0")
-                if self._spread_profile is not None and self._calendar is not None:
-                    spread_pips = self._compute_spread_pips(active_sessions)
-                    half_spread = Decimal(str(spread_pips)) * self._spread_profile.pip_value / 2
-                self._exchange.half_spread = half_spread
+            # Update indicators
+            self._indicators.update(bar)
 
-                # Build execution context
-                ctx_metadata = {}
-                if active_sessions:
-                    ctx_metadata["sessions"] = active_sessions
-                if half_spread > 0:
-                    ctx_metadata["half_spread"] = half_spread
+            # Publish market data event
+            self._event_bus.publish(event)
+            self._hooks.emit("before_bar", event=event, bar=bar)
+
+            # Check calendar for market hours
+            market_open = True
+            active_sessions = []
+            if self._calendar is not None:
+                market_open = self._calendar.is_market_open(bar.timestamp)
+                if market_open:
+                    active_sessions = self._calendar.active_sessions(bar.timestamp)
+
+            # Compute bid/ask spread for this bar
+            half_spread = Decimal("0")
+            if self._spread_profile is not None and self._calendar is not None:
+                spread_pips = self._compute_spread_pips(active_sessions)
+                half_spread = Decimal(str(spread_pips)) * self._spread_profile.pip_value / 2
+            if self._fixed_half_spread is not None:
+                half_spread = self._fixed_half_spread
+            self._exchange.half_spread = half_spread
+
+            # Build execution context
+            ctx_metadata = {}
+            if active_sessions:
+                ctx_metadata["sessions"] = active_sessions
+            if half_spread > 0:
+                ctx_metadata["half_spread"] = half_spread
+                ctx_metadata["spread_price"] = half_spread * 2
+                if self._spread_profile is not None and self._fixed_half_spread is None:
                     ctx_metadata["spread_pips"] = float(spread_pips)
-                ctx = ExecutionContext(
-                    timestamp=bar.timestamp,
-                    symbol=symbol,
-                    current_price=bar.close,
-                    volume=bar.volume,
-                    account=self._account,
-                    metadata=ctx_metadata,
-                )
+            ctx = ExecutionContext(
+                timestamp=bar.timestamp,
+                symbol=symbol,
+                current_price=bar.close,
+                volume=bar.volume,
+                account=self._account,
+                metadata=ctx_metadata,
+            )
 
-                # Process pending orders from previous bars (no look-ahead)
-                fills = self._execution_engine.process_bar(symbol, bar, ctx)
-                self._dispatch_fills(fills, bar, ctx, fail_fast)
+            # Process pending orders from previous bars (no look-ahead)
+            fills = self._execution_engine.process_bar(symbol, bar, ctx)
+            self._dispatch_fills(fills, bar, ctx, self._config.fail_fast)
 
-                # A bracket is submitted from on_fill — at the fill instant, not at this
-                # bar's close — so it protects the position for the rest of this bar.
-                # Deferring it would leave an entry without a stop for its whole fill bar.
-                if fills:
-                    self._dispatch_fills(
-                        self._execution_engine.process_bar_late(symbol, bar, ctx),
-                        bar, ctx, fail_fast)
+            # A bracket is submitted from on_fill — at the fill instant, not at this
+            # bar's close — so it protects the position for the rest of this bar.
+            # Deferring it would leave an entry without a stop for its whole fill bar.
+            if fills:
+                self._dispatch_fills(
+                    self._execution_engine.process_bar_late(symbol, bar, ctx),
+                    bar, ctx, self._config.fail_fast)
 
-                # Update account prices and check margin
-                prices = {symbol: bar.close}
-                margin_status = self._account.update_market_prices(prices, bar.timestamp)
+            # Update account prices and check margin
+            prices = {symbol: bar.close}
+            margin_status = self._account.update_market_prices(prices, bar.timestamp)
 
-                if margin_status == "margin_call":
-                    self._hooks.emit("on_margin_call", account=self._account, timestamp=bar.timestamp)
-                elif margin_status == "liquidation":
-                    self._hooks.emit("on_margin_call", account=self._account, timestamp=bar.timestamp)
-                    self._liquidate_all(bar, ctx)
+            if margin_status == "margin_call":
+                self._hooks.emit("on_margin_call", account=self._account, timestamp=bar.timestamp)
+            elif margin_status == "liquidation":
+                self._hooks.emit("on_margin_call", account=self._account, timestamp=bar.timestamp)
+                self._liquidate_all(bar, ctx)
 
-                # If market closed, skip strategy and order submission
-                if not market_open:
-                    self._hooks.emit("on_market_closed", event=event, bar=bar, timestamp=bar.timestamp)
-                    self._hooks.emit("after_bar", event=event, bar=bar)
+            # If market closed, skip strategy and order submission
+            if not market_open:
+                self._hooks.emit("on_market_closed", event=event, bar=bar, timestamp=bar.timestamp)
+                self._hooks.emit("after_bar", event=event, bar=bar)
+                continue
+
+            # Run strategy (only after warmup)
+            if self._bar_count > self._warmup:
+                self._hooks.emit("before_signal", event=event)
+                try:
+                    self._strategy.on_bar(event)
+                except Exception as e:
+                    if self._config.fail_fast:
+                        raise
+                    logger.error(f"Strategy error on bar {self._bar_count}: {e}", exc_info=True)
+                    self._hooks.emit("on_strategy_error", error=e, event=event, bar_index=self._bar_count)
                     continue
 
-                # Run strategy (only after warmup)
-                if bar_count > warmup:
-                    self._hooks.emit("before_signal", event=event)
-                    try:
-                        self._strategy.on_bar(event)
-                    except Exception as e:
-                        if fail_fast:
-                            raise
-                        logger.error(f"Strategy error on bar {bar_count}: {e}", exc_info=True)
-                        self._hooks.emit("on_strategy_error", error=e, event=event, bar_index=bar_count)
-                        continue
+                # Collect signals from strategy context
+                if hasattr(self._strategy, 'context'):
+                    signals = self._strategy.context.pop_signals()
+                    for signal in signals:
+                        self._hooks.emit("after_signal", signal=signal)
+                        self._execution_engine.process_signal(signal, ctx)
 
-                    # Collect signals from strategy context
-                    if hasattr(self._strategy, 'context'):
-                        signals = self._strategy.context.pop_signals()
-                        for signal in signals:
-                            self._hooks.emit("after_signal", signal=signal)
-                            self._execution_engine.process_signal(signal, ctx)
+            self._hooks.emit("after_bar", event=event, bar=bar)
 
-                self._hooks.emit("after_bar", event=event, bar=bar)
+        return True
 
-        self._hooks.emit("on_backtest_end", engine=self)
-        logger.info(f"Backtest complete. {bar_count} bars processed.")
+    def _finish(self) -> None:
+        if not self._finished:
+            self._finished = True
+            self._hooks.emit("on_backtest_end", engine=self)
+            logger.info("Backtest complete. %s bars processed.", self._bar_count)
 
+    def result(self) -> BacktestResult:
         return BacktestResult(
             account=self._account,
             event_bus=self._event_bus,
@@ -380,6 +452,13 @@ class BacktestEngine:
             ohlcv_data=self._ohlcv_data,
             indicators=self._indicators,
         )
+
+    def run(self) -> BacktestResult:
+        """Execute a fresh backtest using the resumable bar loop."""
+        self.start()
+        while self.step():
+            pass
+        return self.result()
 
     def _dispatch_fills(self, fills, bar: Bar, ctx: ExecutionContext, fail_fast: bool) -> None:
         """Book each fill on the account and hand it to the strategy."""

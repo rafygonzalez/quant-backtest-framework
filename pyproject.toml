@@ -32,7 +32,7 @@ dev = [
 ]
 
 [project.scripts]
-# btframework = "btframework.cli:main"
+btframework-replay = "btframework.replay.server:main"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/btframework"]
